@@ -33,3 +33,5 @@ The workflow:
 6. runs `work/build_final_deliverables.py`,
 7. emails exactly the three final deliverables,
 8. uploads the same files as a GitHub Actions artifact.
+
+The workflow uses Node.js 24-compatible GitHub actions (`actions/checkout@v6`, `actions/setup-python@v6`, and `actions/upload-artifact@v6`). Self-hosted runners need Actions Runner `v2.327.1` or newer.
