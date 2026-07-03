@@ -35,6 +35,6 @@ The workflow:
 8. verifies that the three final deliverables exist,
 9. uploads the same files as a GitHub Actions artifact.
 
-If a run fails before the deliverables are produced, the workflow uploads `pilot-logbook-diagnostics` with `work/automation.log`, a file listing, and any intermediate XLSX files that were created.
+If a run fails before the deliverables are produced, the deliverables artifact upload is skipped and the workflow uploads `pilot-logbook-diagnostics` with `work/automation.log`, a file listing, and any intermediate XLSX files that were created.
 
 The workflow uses Node.js 24-compatible GitHub actions (`actions/checkout@v6`, `actions/setup-python@v6`, and `actions/upload-artifact@v6`). Self-hosted runners need Actions Runner `v2.327.1` or newer.

@@ -57,6 +57,7 @@ jobs:
 
       - name: Upload generated deliverables
         uses: actions/upload-artifact@v6
+        if: ${{ hashFiles('outputs/log filled.xlsx') != '' && hashFiles('outputs/ICAO_EASA_A4_landscape_logbook.pdf') != '' && hashFiles('outputs/A5_booklet_A4_portrait_duplex.pdf') != '' }}
         with:
           name: pilot-logbook-deliverables
           path: |
