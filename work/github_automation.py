@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import shutil
 import smtplib
 import subprocess
@@ -28,6 +29,7 @@ SHEET_NAME = os.environ.get("LOGBOOK_SHEET_NAME", "flt_log")
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
 ]
+ILLEGAL_XLSX_CHARS = re.compile(r"[\x00-\x08\x0B-\x0C\x0E-\x1F]")
 
 
 def require_env(name: str) -> str:
@@ -73,10 +75,16 @@ def export_sheet_values_xlsx(sheets: Any, spreadsheet_id: str, destination: Path
     ws = wb.active
     ws.title = SHEET_NAME
     for row in values:
-        ws.append(row)
+        ws.append([clean_xlsx_value(value) for value in row])
     destination.parent.mkdir(parents=True, exist_ok=True)
     wb.save(destination)
     print(f"Wrote {destination} from Sheets API values: {len(values)} rows")
+
+
+def clean_xlsx_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return ILLEGAL_XLSX_CHARS.sub("", value)
+    return value
 
 
 def ensure_sheet_name(sheets: Any, spreadsheet_id: str, client_email: str) -> int:
