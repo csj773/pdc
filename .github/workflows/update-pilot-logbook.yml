@@ -47,7 +47,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p work outputs
-          python work/github_automation.py 2>&1 | tee work/automation.log
+          python work/github_automation.py --skip-email 2>&1 | tee work/automation.log
 
       - name: Verify generated deliverables
         run: |
@@ -67,6 +67,9 @@ jobs:
             outputs/A5_booklet_A4_portrait_duplex.pdf
             work/verify_*.png
           if-no-files-found: error
+
+      - name: Send Gmail delivery
+        run: python work/github_automation.py --send-email-only
 
       - name: Write diagnostics file list
         if: always()
@@ -89,6 +92,7 @@ jobs:
             work/automation.log
             work/generated-files.txt
             work/diagnostics.txt
+            work/github_automation_summary.json
             work/PILOTLOG_export.xlsx
             work/log_filled_authoritative_download.xlsx
             work/log_filled_authoritative_synced.xlsx

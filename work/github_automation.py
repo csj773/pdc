@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import base64
 import json
 import os
@@ -21,6 +22,7 @@ from openpyxl import Workbook, load_workbook
 ROOT = Path(os.environ.get("LOGBOOK_ROOT", Path(__file__).resolve().parents[1])).resolve()
 WORK = ROOT / "work"
 OUT = ROOT / "outputs"
+SUMMARY_JSON = WORK / "github_automation_summary.json"
 
 PILOTLOG_SPREADSHEET_ID = os.environ.get("PILOTLOG_SPREADSHEET_ID", "1mKjEd__zIoMJaa6CLmDE-wALGhtlG-USLTAiQBZnioc")
 AUTHORITATIVE_SPREADSHEET_ID = os.environ.get("AUTHORITATIVE_SPREADSHEET_ID", "1tRvMJQeoqpGvekJ3xzs_Z80e9QnXoGsIEdIuchY7Wqw")
@@ -243,7 +245,7 @@ def send_email(summary: dict[str, str]) -> None:
         smtp.send_message(msg)
 
 
-def main() -> None:
+def build_logbook() -> dict[str, str]:
     WORK.mkdir(parents=True, exist_ok=True)
     OUT.mkdir(parents=True, exist_ok=True)
     sheets, client_email = google_clients()
@@ -262,6 +264,29 @@ def main() -> None:
     update_authoritative_sheet(sheets, WORK / "log_filled_authoritative_synced.xlsx", client_email)
     build_output = run_python("build_final_deliverables.py")
     summary = {**parse_lines(sync_output), **parse_lines(build_output)}
+    SUMMARY_JSON.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"SUMMARY_JSON {SUMMARY_JSON}")
+    return summary
+
+
+def read_summary() -> dict[str, str]:
+    if not SUMMARY_JSON.exists():
+        return {}
+    return json.loads(SUMMARY_JSON.read_text(encoding="utf-8"))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--send-email-only", action="store_true", help="Send already generated deliverables without rebuilding.")
+    parser.add_argument("--skip-email", action="store_true", help="Build deliverables and skip SMTP delivery.")
+    args = parser.parse_args()
+    if args.send_email_only:
+        send_email(read_summary())
+        return
+    summary = build_logbook()
+    if args.skip_email:
+        print("Email delivery skipped by --skip-email.")
+        return
     send_email(summary)
 
 

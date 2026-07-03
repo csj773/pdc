@@ -33,9 +33,11 @@ The workflow:
 4. runs `work/sync_authoritative_from_pilotlog.py`,
 5. updates the authoritative Google Sheet from `work/log_filled_authoritative_synced.xlsx`,
 6. runs `work/build_final_deliverables.py`,
-7. emails exactly the three final deliverables,
-8. verifies that the three final deliverables exist,
-9. uploads the same files as a GitHub Actions artifact.
+7. verifies that the three final deliverables exist,
+8. uploads the same files as a GitHub Actions artifact,
+9. emails exactly the three final deliverables.
+
+The build step uses `python work/github_automation.py --skip-email` so generated files can be verified and uploaded before SMTP delivery. Gmail sending runs afterward with `--send-email-only`; if Gmail credentials are wrong, the uploaded deliverables remain available as artifacts.
 
 If a run fails before the deliverables are produced, the deliverables artifact upload is skipped and the workflow uploads `pilot-logbook-diagnostics` with `work/automation.log`, a file listing, and any intermediate XLSX files that were created. The automation step uses `pipefail` so Python errors are reported at the failing step instead of being hidden by `tee`.
 
