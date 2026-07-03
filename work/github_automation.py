@@ -14,7 +14,7 @@ from typing import Any
 from google.oauth2 import service_account
 from googleapiclient.errors import HttpError
 from googleapiclient.discovery import build
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 
 ROOT = Path(os.environ.get("LOGBOOK_ROOT", Path(__file__).resolve().parents[1])).resolve()
@@ -25,9 +25,7 @@ PILOTLOG_SPREADSHEET_ID = os.environ.get("PILOTLOG_SPREADSHEET_ID", "1mKjEd__zIo
 AUTHORITATIVE_SPREADSHEET_ID = os.environ.get("AUTHORITATIVE_SPREADSHEET_ID", "1tRvMJQeoqpGvekJ3xzs_Z80e9QnXoGsIEdIuchY7Wqw")
 SHEET_NAME = os.environ.get("LOGBOOK_SHEET_NAME", "flt_log")
 
-XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 SCOPES = [
-    "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/spreadsheets",
 ]
 
@@ -49,18 +47,36 @@ def service_account_info() -> dict[str, Any]:
     return json.loads(raw)
 
 
-def google_clients() -> tuple[Any, Any, str]:
+def google_clients() -> tuple[Any, str]:
     info = service_account_info()
     client_email = info.get("client_email", "<missing client_email>")
     print(f"Using Google service account: {client_email}")
     creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
-    return build("drive", "v3", credentials=creds), build("sheets", "v4", credentials=creds), client_email
+    return build("sheets", "v4", credentials=creds), client_email
 
 
-def export_xlsx(drive: Any, spreadsheet_id: str, destination: Path) -> None:
-    request = drive.files().export_media(fileId=spreadsheet_id, mimeType=XLSX_MIME)
+def export_sheet_values_xlsx(sheets: Any, spreadsheet_id: str, destination: Path, client_email: str, *, allow_rename: bool) -> None:
+    if allow_rename:
+        ensure_sheet_name(sheets, spreadsheet_id, client_email)
+    else:
+        require_sheet_exists(sheets, spreadsheet_id, client_email)
+    result = sheets.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id,
+        range=f"{SHEET_NAME}!A:AZ",
+        valueRenderOption="FORMATTED_VALUE",
+        dateTimeRenderOption="FORMATTED_STRING",
+    ).execute()
+    values = result.get("values", [])
+    if not values:
+        raise RuntimeError(f"No values returned from spreadsheet {spreadsheet_id} sheet {SHEET_NAME}.")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = SHEET_NAME
+    for row in values:
+        ws.append(row)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(request.execute())
+    wb.save(destination)
+    print(f"Wrote {destination} from Sheets API values: {len(values)} rows")
 
 
 def ensure_sheet_name(sheets: Any, spreadsheet_id: str, client_email: str) -> int:
@@ -87,6 +103,25 @@ def ensure_sheet_name(sheets: Any, spreadsheet_id: str, client_email: str) -> in
         body={"requests": [{"updateSheetProperties": {"properties": {"sheetId": sheet_id, "title": SHEET_NAME}, "fields": "title"}}]},
     ).execute()
     return sheet_id
+
+
+def require_sheet_exists(sheets: Any, spreadsheet_id: str, client_email: str) -> int:
+    try:
+        metadata = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+    except HttpError as exc:
+        if exc.resp.status == 403:
+            raise RuntimeError(
+                "Google Sheets permission denied. Share spreadsheet "
+                f"{spreadsheet_id} with service account {client_email} as Editor, "
+                "then rerun the workflow."
+            ) from exc
+        raise
+    for sheet in metadata.get("sheets", []):
+        props = sheet["properties"]
+        if props.get("sheetType") == "GRID" and props.get("title") == SHEET_NAME:
+            return int(props["sheetId"])
+    titles = ", ".join(sheet["properties"].get("title", "") for sheet in metadata.get("sheets", []))
+    raise RuntimeError(f"Spreadsheet {spreadsheet_id} does not contain required sheet {SHEET_NAME!r}. Tabs: {titles}")
 
 
 def cell_to_sheets_value(cell: Any) -> str | int | float:
@@ -203,12 +238,12 @@ def send_email(summary: dict[str, str]) -> None:
 def main() -> None:
     WORK.mkdir(parents=True, exist_ok=True)
     OUT.mkdir(parents=True, exist_ok=True)
-    drive, sheets, client_email = google_clients()
+    sheets, client_email = google_clients()
 
     ensure_sheet_name(sheets, AUTHORITATIVE_SPREADSHEET_ID, client_email)
     authoritative_download = WORK / "log_filled_authoritative_download.xlsx"
-    export_xlsx(drive, AUTHORITATIVE_SPREADSHEET_ID, authoritative_download)
-    export_xlsx(drive, PILOTLOG_SPREADSHEET_ID, WORK / "PILOTLOG_export.xlsx")
+    export_sheet_values_xlsx(sheets, AUTHORITATIVE_SPREADSHEET_ID, authoritative_download, client_email, allow_rename=True)
+    export_sheet_values_xlsx(sheets, PILOTLOG_SPREADSHEET_ID, WORK / "PILOTLOG_export.xlsx", client_email, allow_rename=False)
 
     previous_output = OUT / "log filled.xlsx"
     if not previous_output.exists():

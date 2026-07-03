@@ -27,7 +27,7 @@ base64 -i service-account.json | pbcopy
 
 The workflow:
 
-1. exports both Google Sheets files to XLSX,
+1. reads both Google Sheets `flt_log` tabs through the Sheets API and saves local XLSX inputs,
 2. ensures the authoritative tab is named `flt_log`,
 3. writes `work/PILOTLOG_export.xlsx`,
 4. runs `work/sync_authoritative_from_pilotlog.py`,
@@ -39,4 +39,4 @@ The workflow:
 
 If a run fails before the deliverables are produced, the deliverables artifact upload is skipped and the workflow uploads `pilot-logbook-diagnostics` with `work/automation.log`, a file listing, and any intermediate XLSX files that were created. The automation step uses `pipefail` so Python errors are reported at the failing step instead of being hidden by `tee`.
 
-The workflow uses Node.js 24-compatible GitHub actions (`actions/checkout@v6`, `actions/setup-python@v6`, and `actions/upload-artifact@v6`). Self-hosted runners need Actions Runner `v2.327.1` or newer.
+The workflow uses Node.js 24-compatible GitHub actions (`actions/checkout@v6`, `actions/setup-python@v6`, and `actions/upload-artifact@v6`). Self-hosted runners need Actions Runner `v2.327.1` or newer. It does not require Google Drive API export; only Google Sheets API access is used.
