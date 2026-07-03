@@ -45,15 +45,16 @@ jobs:
 
       - name: Run logbook automation
         run: |
+          set -o pipefail
           mkdir -p work outputs
           python work/github_automation.py 2>&1 | tee work/automation.log
 
       - name: Verify generated deliverables
         run: |
+          find outputs work -maxdepth 1 -type f -print | sort | tee work/generated-files.txt
           test -s "outputs/log filled.xlsx"
           test -s "outputs/ICAO_EASA_A4_landscape_logbook.pdf"
           test -s "outputs/A5_booklet_A4_portrait_duplex.pdf"
-          find outputs work -maxdepth 1 -type f -print | sort | tee work/generated-files.txt
 
       - name: Upload generated deliverables
         uses: actions/upload-artifact@v6
