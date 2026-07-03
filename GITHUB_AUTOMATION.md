@@ -32,6 +32,9 @@ The workflow:
 5. updates the authoritative Google Sheet from `work/log_filled_authoritative_synced.xlsx`,
 6. runs `work/build_final_deliverables.py`,
 7. emails exactly the three final deliverables,
-8. uploads the same files as a GitHub Actions artifact.
+8. verifies that the three final deliverables exist,
+9. uploads the same files as a GitHub Actions artifact.
+
+If a run fails before the deliverables are produced, the workflow uploads `pilot-logbook-diagnostics` with `work/automation.log`, a file listing, and any intermediate XLSX files that were created.
 
 The workflow uses Node.js 24-compatible GitHub actions (`actions/checkout@v6`, `actions/setup-python@v6`, and `actions/upload-artifact@v6`). Self-hosted runners need Actions Runner `v2.327.1` or newer.

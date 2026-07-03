@@ -44,11 +44,19 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Run logbook automation
-        run: python work/github_automation.py
+        run: |
+          mkdir -p work outputs
+          python work/github_automation.py 2>&1 | tee work/automation.log
+
+      - name: Verify generated deliverables
+        run: |
+          test -s "outputs/log filled.xlsx"
+          test -s "outputs/ICAO_EASA_A4_landscape_logbook.pdf"
+          test -s "outputs/A5_booklet_A4_portrait_duplex.pdf"
+          find outputs work -maxdepth 1 -type f -print | sort | tee work/generated-files.txt
 
       - name: Upload generated deliverables
         uses: actions/upload-artifact@v6
-        if: always()
         with:
           name: pilot-logbook-deliverables
           path: |
@@ -56,4 +64,30 @@ jobs:
             outputs/ICAO_EASA_A4_landscape_logbook.pdf
             outputs/A5_booklet_A4_portrait_duplex.pdf
             work/verify_*.png
+          if-no-files-found: error
+
+      - name: Write diagnostics file list
+        if: always()
+        run: |
+          mkdir -p work
+          {
+            date -u
+            printf '\n== outputs ==\n'
+            find outputs -maxdepth 2 -type f -print 2>/dev/null || true
+            printf '\n== work ==\n'
+            find work -maxdepth 2 -type f -print 2>/dev/null || true
+          } > work/diagnostics.txt
+
+      - name: Upload diagnostics
+        uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: pilot-logbook-diagnostics
+          path: |
+            work/automation.log
+            work/generated-files.txt
+            work/diagnostics.txt
+            work/PILOTLOG_export.xlsx
+            work/log_filled_authoritative_download.xlsx
+            work/log_filled_authoritative_synced.xlsx
           if-no-files-found: warn
