@@ -13,6 +13,8 @@ Share both Google Sheets with the service account email from the JSON credential
 - authoritative `log filled`: `1tRvMJQeoqpGvekJ3xzs_Z80e9QnXoGsIEdIuchY7Wqw`
 - upstream `PILOTLOG`: `1mKjEd__zIoMJaa6CLmDE-wALGhtlG-USLTAiQBZnioc`
 
+Use **Editor** access. The workflow must be able to read both spreadsheets and write the synced `flt_log` sheet back to the authoritative `log filled` file. The run log prints the service account email as `Using Google service account: ...`.
+
 To create the base64 secret locally:
 
 ```sh

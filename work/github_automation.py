@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from google.oauth2 import service_account
+from googleapiclient.errors import HttpError
 from googleapiclient.discovery import build
 from openpyxl import load_workbook
 
@@ -48,9 +49,12 @@ def service_account_info() -> dict[str, Any]:
     return json.loads(raw)
 
 
-def google_clients() -> tuple[Any, Any]:
-    creds = service_account.Credentials.from_service_account_info(service_account_info(), scopes=SCOPES)
-    return build("drive", "v3", credentials=creds), build("sheets", "v4", credentials=creds)
+def google_clients() -> tuple[Any, Any, str]:
+    info = service_account_info()
+    client_email = info.get("client_email", "<missing client_email>")
+    print(f"Using Google service account: {client_email}")
+    creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+    return build("drive", "v3", credentials=creds), build("sheets", "v4", credentials=creds), client_email
 
 
 def export_xlsx(drive: Any, spreadsheet_id: str, destination: Path) -> None:
@@ -59,8 +63,17 @@ def export_xlsx(drive: Any, spreadsheet_id: str, destination: Path) -> None:
     destination.write_bytes(request.execute())
 
 
-def ensure_sheet_name(sheets: Any, spreadsheet_id: str) -> int:
-    metadata = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+def ensure_sheet_name(sheets: Any, spreadsheet_id: str, client_email: str) -> int:
+    try:
+        metadata = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+    except HttpError as exc:
+        if exc.resp.status == 403:
+            raise RuntimeError(
+                "Google Sheets permission denied. Share spreadsheet "
+                f"{spreadsheet_id} with service account {client_email} as Editor, "
+                "then rerun the workflow."
+            ) from exc
+        raise
     sheet_props = [sheet["properties"] for sheet in metadata.get("sheets", []) if sheet["properties"].get("sheetType") == "GRID"]
     for props in sheet_props:
         if props.get("title") == SHEET_NAME:
@@ -93,8 +106,8 @@ def cell_to_sheets_value(cell: Any) -> str | int | float:
     return value
 
 
-def update_authoritative_sheet(sheets: Any, synced_xlsx: Path) -> None:
-    ensure_sheet_name(sheets, AUTHORITATIVE_SPREADSHEET_ID)
+def update_authoritative_sheet(sheets: Any, synced_xlsx: Path, client_email: str) -> None:
+    ensure_sheet_name(sheets, AUTHORITATIVE_SPREADSHEET_ID, client_email)
     wb = load_workbook(synced_xlsx, data_only=False)
     ws = wb[SHEET_NAME] if SHEET_NAME in wb.sheetnames else wb.active
     values = []
@@ -190,9 +203,9 @@ def send_email(summary: dict[str, str]) -> None:
 def main() -> None:
     WORK.mkdir(parents=True, exist_ok=True)
     OUT.mkdir(parents=True, exist_ok=True)
-    drive, sheets = google_clients()
+    drive, sheets, client_email = google_clients()
 
-    ensure_sheet_name(sheets, AUTHORITATIVE_SPREADSHEET_ID)
+    ensure_sheet_name(sheets, AUTHORITATIVE_SPREADSHEET_ID, client_email)
     authoritative_download = WORK / "log_filled_authoritative_download.xlsx"
     export_xlsx(drive, AUTHORITATIVE_SPREADSHEET_ID, authoritative_download)
     export_xlsx(drive, PILOTLOG_SPREADSHEET_ID, WORK / "PILOTLOG_export.xlsx")
@@ -203,7 +216,7 @@ def main() -> None:
     shutil.copy2(authoritative_download, WORK / "log_filled_authoritative_synced.xlsx")
 
     sync_output = run_python("sync_authoritative_from_pilotlog.py")
-    update_authoritative_sheet(sheets, WORK / "log_filled_authoritative_synced.xlsx")
+    update_authoritative_sheet(sheets, WORK / "log_filled_authoritative_synced.xlsx", client_email)
     build_output = run_python("build_final_deliverables.py")
     summary = {**parse_lines(sync_output), **parse_lines(build_output)}
     send_email(summary)
