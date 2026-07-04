@@ -330,9 +330,9 @@ def send_email(summary: dict[str, str]) -> None:
             [
                 f"PILOTLOG logbook update completed on {today}.",
                 "",
-                f"Added rows: {summary.get('ADDED', summary.get('SYNC_ADDED', 'n/a'))}",
-                f"Deleted rows: {summary.get('DELETED', summary.get('SYNC_DELETED', 'n/a'))}",
-                f"Modified rows: {summary.get('MODIFIED', summary.get('SYNC_MODIFIED', 'n/a'))}",
+                f"Added rows: {summary.get('SYNC_ADDED', summary.get('ADDED', 'n/a'))}",
+                f"Deleted rows: {summary.get('SYNC_DELETED', summary.get('DELETED', 'n/a'))}",
+                f"Modified rows: {summary.get('SYNC_MODIFIED', summary.get('MODIFIED', 'n/a'))}",
                 f"Final flight count: {summary.get('FINAL_FLIGHTS', 'n/a')}",
                 f"Final A4 PDF pages: {summary.get('FINAL_A4_PAGES', 'n/a')}",
                 f"Final cumulative totals: {summary.get('FINAL_TOTALS', 'n/a')}",

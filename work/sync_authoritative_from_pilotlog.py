@@ -7,10 +7,34 @@ import build_final_deliverables as b
 
 CHECKPOINT_FILE = b.WORK / "pilotlog_checkpoint_rows.json"
 CHECKPOINT_HEADER = ["key", "fingerprint"]
+SEED_LOGBOOK_XLSX = b.WORK / "seed" / "log_filled_seed.xlsx"
 
 
 def keyed(flights: list[b.Flight]) -> dict[tuple, b.Flight]:
     return {b.flight_identity(flight): flight for flight in flights}
+
+
+def data_quality(flight: b.Flight) -> tuple:
+    return (
+        1 if flight.blk_min else 0,
+        1 if flight.reg else 0,
+        1 if flight.off else 0,
+        1 if flight.on else 0,
+        round(flight.ngt_min),
+        round(flight.ifr_min),
+        round(flight.pic_min),
+    )
+
+
+def merge_prefer_complete(*flight_groups: list[b.Flight]) -> dict[tuple, b.Flight]:
+    merged: dict[tuple, b.Flight] = {}
+    for flights in flight_groups:
+        for flight in flights:
+            key = b.flight_identity(flight)
+            current = merged.get(key)
+            if current is None or data_quality(flight) >= data_quality(current):
+                merged[key] = flight
+    return merged
 
 
 def field_tuple(flight: b.Flight) -> tuple:
@@ -82,10 +106,11 @@ def read_base_flights() -> list[b.Flight]:
         else []
     )
     previous_output_flights = b.read_previous_output_flights()
-    merged = keyed(previous_output_flights)
-    merged.update(keyed(authoritative_flights))
+    seed_flights = b.read_filled_logbook_flights(SEED_LOGBOOK_XLSX)
+    merged = merge_prefer_complete(seed_flights, previous_output_flights, authoritative_flights)
 
     if merged:
+        print(f"SYNC_BASE_SEED_FLIGHTS {len(seed_flights)}")
         print(f"SYNC_BASE_AUTHORITATIVE_FLIGHTS {len(authoritative_flights)}")
         print(f"SYNC_BASE_PREVIOUS_OUTPUT_FLIGHTS {len(previous_output_flights)}")
         print(f"SYNC_BASE_MERGED_FLIGHTS {len(merged)}")

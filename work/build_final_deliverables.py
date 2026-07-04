@@ -882,6 +882,19 @@ def validate(flights: list[Flight], totals: list[dict]) -> dict:
     }
 
 
+def validate_expected_summary(result: dict) -> None:
+    min_flights = int(os.environ.get("LOGBOOK_MIN_FLIGHTS", "0") or 0)
+    if min_flights and result["flight_count"] < min_flights:
+        raise RuntimeError(f"Final flight count too low: {result['flight_count']} < {min_flights}")
+
+    expected_blk = os.environ.get("LOGBOOK_EXPECTED_FINAL_BLK", "").strip()
+    if expected_blk:
+        actual_blk = result["final"]["blk"]
+        expected_blk_min = round(minutes(expected_blk))
+        if actual_blk != expected_blk_min:
+            raise RuntimeError(f"Final BLK mismatch: {fmt_hmm(actual_blk)} != {expected_blk}")
+
+
 def main() -> None:
     OUT.mkdir(exist_ok=True)
     WORK.mkdir(exist_ok=True)
@@ -894,6 +907,7 @@ def main() -> None:
     write_a4_pdf(flights, totals)
     write_booklet()
     result = validate(flights, totals)
+    validate_expected_summary(result)
     final = result["final"]
     print("ADDED", added)
     print("DELETED", deleted)
