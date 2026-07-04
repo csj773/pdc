@@ -559,7 +559,10 @@ def write_xlsx(flights: list[Flight], totals: list[dict]) -> None:
                 ws.write_number(row, 7, excel_time_fraction(f.on), time_fmt)
             else:
                 ws.write_blank(row, 7, None, time_fmt)
-            ws.write_formula(row, 8, f'=IF(G{excel_row}>0,MOD(H{excel_row}-G{excel_row},1),"")', dur_fmt, duration_fraction(f.blk_min) if f.blk_min else "")
+            if f.blk_min:
+                ws.write_number(row, 8, duration_fraction(f.blk_min), dur_fmt)
+            else:
+                ws.write_blank(row, 8, None, dur_fmt)
             if f.takeoff:
                 ws.write_number(row, 9, excel_time_fraction(f.takeoff), time_fmt)
             else:
