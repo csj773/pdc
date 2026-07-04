@@ -27,6 +27,8 @@ SUMMARY_JSON = WORK / "github_automation_summary.json"
 PILOTLOG_SPREADSHEET_ID = os.environ.get("PILOTLOG_SPREADSHEET_ID", "1mKjEd__zIoMJaa6CLmDE-wALGhtlG-USLTAiQBZnioc")
 AUTHORITATIVE_SPREADSHEET_ID = os.environ.get("AUTHORITATIVE_SPREADSHEET_ID", "1tRvMJQeoqpGvekJ3xzs_Z80e9QnXoGsIEdIuchY7Wqw")
 SHEET_NAME = os.environ.get("LOGBOOK_SHEET_NAME", "flt_log")
+CHECKPOINT_SHEET_NAME = os.environ.get("PILOTLOG_CHECKPOINT_SHEET_NAME", "_pilotlog_checkpoint")
+CHECKPOINT_FILE = WORK / "pilotlog_checkpoint_rows.json"
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -132,6 +134,86 @@ def require_sheet_exists(sheets: Any, spreadsheet_id: str, client_email: str) ->
             return int(props["sheetId"])
     titles = ", ".join(sheet["properties"].get("title", "") for sheet in metadata.get("sheets", []))
     raise RuntimeError(f"Spreadsheet {spreadsheet_id} does not contain required sheet {SHEET_NAME!r}. Tabs: {titles}")
+
+
+def ensure_checkpoint_sheet(sheets: Any, spreadsheet_id: str, client_email: str) -> int:
+    try:
+        metadata = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+    except HttpError as exc:
+        if exc.resp.status == 403:
+            raise RuntimeError(
+                "Google Sheets permission denied. Share spreadsheet "
+                f"{spreadsheet_id} with service account {client_email} as Editor, "
+                "then rerun the workflow."
+            ) from exc
+        raise
+
+    for sheet in metadata.get("sheets", []):
+        props = sheet["properties"]
+        if props.get("sheetType") == "GRID" and props.get("title") == CHECKPOINT_SHEET_NAME:
+            sheet_id = int(props["sheetId"])
+            if not props.get("hidden"):
+                sheets.spreadsheets().batchUpdate(
+                    spreadsheetId=spreadsheet_id,
+                    body={
+                        "requests": [
+                            {
+                                "updateSheetProperties": {
+                                    "properties": {"sheetId": sheet_id, "hidden": True},
+                                    "fields": "hidden",
+                                }
+                            }
+                        ]
+                    },
+                ).execute()
+            return sheet_id
+
+    response = sheets.spreadsheets().batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={
+            "requests": [
+                {
+                    "addSheet": {
+                        "properties": {
+                            "title": CHECKPOINT_SHEET_NAME,
+                            "hidden": True,
+                            "gridProperties": {"rowCount": 1000, "columnCount": 2},
+                        }
+                    }
+                }
+            ]
+        },
+    ).execute()
+    return int(response["replies"][0]["addSheet"]["properties"]["sheetId"])
+
+
+def download_checkpoint(sheets: Any, client_email: str) -> None:
+    ensure_checkpoint_sheet(sheets, AUTHORITATIVE_SPREADSHEET_ID, client_email)
+    response = sheets.spreadsheets().values().get(
+        spreadsheetId=AUTHORITATIVE_SPREADSHEET_ID,
+        range=f"{CHECKPOINT_SHEET_NAME}!A:B",
+    ).execute()
+    values = response.get("values", [])
+    CHECKPOINT_FILE.write_text(json.dumps(values, ensure_ascii=False), encoding="utf-8")
+
+
+def upload_checkpoint(sheets: Any, client_email: str) -> None:
+    if not CHECKPOINT_FILE.exists():
+        return
+    ensure_checkpoint_sheet(sheets, AUTHORITATIVE_SPREADSHEET_ID, client_email)
+    values = json.loads(CHECKPOINT_FILE.read_text(encoding="utf-8"))
+    sheets.spreadsheets().values().clear(
+        spreadsheetId=AUTHORITATIVE_SPREADSHEET_ID,
+        range=f"{CHECKPOINT_SHEET_NAME}!A:B",
+        body={},
+    ).execute()
+    if values:
+        sheets.spreadsheets().values().update(
+            spreadsheetId=AUTHORITATIVE_SPREADSHEET_ID,
+            range=f"{CHECKPOINT_SHEET_NAME}!A1",
+            valueInputOption="RAW",
+            body={"values": values},
+        ).execute()
 
 
 def cell_to_sheets_value(cell: Any) -> str | int | float:
@@ -251,6 +333,7 @@ def build_logbook() -> dict[str, str]:
     sheets, client_email = google_clients()
 
     ensure_sheet_name(sheets, AUTHORITATIVE_SPREADSHEET_ID, client_email)
+    download_checkpoint(sheets, client_email)
     authoritative_download = WORK / "log_filled_authoritative_download.xlsx"
     export_sheet_values_xlsx(sheets, AUTHORITATIVE_SPREADSHEET_ID, authoritative_download, client_email, allow_rename=True)
     export_sheet_values_xlsx(sheets, PILOTLOG_SPREADSHEET_ID, WORK / "PILOTLOG_export.xlsx", client_email, allow_rename=False)
@@ -262,6 +345,7 @@ def build_logbook() -> dict[str, str]:
 
     sync_output = run_python("sync_authoritative_from_pilotlog.py")
     update_authoritative_sheet(sheets, WORK / "log_filled_authoritative_synced.xlsx", client_email)
+    upload_checkpoint(sheets, client_email)
     build_output = run_python("build_final_deliverables.py")
     summary = {**parse_lines(sync_output), **parse_lines(build_output)}
     SUMMARY_JSON.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

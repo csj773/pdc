@@ -423,6 +423,21 @@ def parse_date(value) -> datetime | None:
     return None
 
 
+def configured_end_date() -> datetime | None:
+    raw = os.environ.get("LOGBOOK_END_DATE", "").strip()
+    return parse_date(raw) if raw else None
+
+
+def filter_flights_by_end_date(flights: list[Flight]) -> list[Flight]:
+    cutoff = configured_end_date()
+    if not cutoff:
+        return flights
+    filtered = [flight for flight in flights if flight.date.date() <= cutoff.date()]
+    print(f"LOGBOOK_END_DATE {cutoff.date()}")
+    print(f"LOGBOOK_END_DATE_FILTERED {len(flights)}->{len(filtered)}")
+    return filtered
+
+
 def norm_airport(value) -> str:
     text = "" if value is None else str(value).strip().upper()
     return {"RKSI": "ICN", "RJAA": "NRT"}.get(text, text)
@@ -853,8 +868,8 @@ def validate(flights: list[Flight], totals: list[dict]) -> dict:
 def main() -> None:
     OUT.mkdir(exist_ok=True)
     WORK.mkdir(exist_ok=True)
-    previous = read_previous_output_flights()
-    flights = read_authoritative_source_flights()
+    previous = filter_flights_by_end_date(read_previous_output_flights())
+    flights = filter_flights_by_end_date(read_authoritative_source_flights())
     added, deleted, modified = compute_changes(previous, flights)
     pages = page_chunks(flights)
     totals = compute_totals(pages)
