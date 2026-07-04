@@ -428,13 +428,27 @@ def configured_end_date() -> datetime | None:
     return parse_date(raw) if raw else None
 
 
+def configured_start_date() -> datetime | None:
+    raw = os.environ.get("LOGBOOK_START_DATE", "").strip()
+    return parse_date(raw) if raw else None
+
+
 def filter_flights_by_end_date(flights: list[Flight]) -> list[Flight]:
+    start = configured_start_date()
     cutoff = configured_end_date()
-    if not cutoff:
+    if not start and not cutoff:
         return flights
-    filtered = [flight for flight in flights if flight.date.date() <= cutoff.date()]
-    print(f"LOGBOOK_END_DATE {cutoff.date()}")
-    print(f"LOGBOOK_END_DATE_FILTERED {len(flights)}->{len(filtered)}")
+    filtered = [
+        flight
+        for flight in flights
+        if (not start or flight.date.date() >= start.date())
+        and (not cutoff or flight.date.date() <= cutoff.date())
+    ]
+    if start:
+        print(f"LOGBOOK_START_DATE {start.date()}")
+    if cutoff:
+        print(f"LOGBOOK_END_DATE {cutoff.date()}")
+    print(f"LOGBOOK_DATE_FILTERED {len(flights)}->{len(filtered)}")
     return filtered
 
 
