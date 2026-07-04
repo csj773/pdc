@@ -8,6 +8,7 @@ import re
 import shutil
 import smtplib
 import subprocess
+import time
 from datetime import datetime
 from email.message import EmailMessage
 from pathlib import Path
@@ -34,6 +35,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
 ]
 ILLEGAL_XLSX_CHARS = re.compile(r"[\x00-\x08\x0B-\x0C\x0E-\x1F]")
+RETRYABLE_GOOGLE_STATUSES = {429, 500, 502, 503, 504}
 
 
 def require_env(name: str) -> str:
@@ -61,6 +63,20 @@ def google_clients() -> tuple[Any, str]:
     return build("sheets", "v4", credentials=creds), client_email
 
 
+def execute_google_request(request: Any, *, attempts: int = 5) -> Any:
+    for attempt in range(1, attempts + 1):
+        try:
+            return request.execute()
+        except HttpError as exc:
+            status = getattr(exc.resp, "status", None)
+            if status not in RETRYABLE_GOOGLE_STATUSES or attempt == attempts:
+                raise
+            delay = min(60, 2 ** attempt)
+            print(f"Google API returned {status}; retrying in {delay}s ({attempt}/{attempts})")
+            time.sleep(delay)
+    raise RuntimeError("Google API request failed without returning a response.")
+
+
 def export_sheet_values_xlsx(sheets: Any, spreadsheet_id: str, destination: Path, client_email: str, *, allow_rename: bool) -> None:
     if allow_rename:
         ensure_sheet_name(sheets, spreadsheet_id, client_email)
@@ -71,7 +87,8 @@ def export_sheet_values_xlsx(sheets: Any, spreadsheet_id: str, destination: Path
         range=f"{SHEET_NAME}!A:AZ",
         valueRenderOption="FORMATTED_VALUE",
         dateTimeRenderOption="FORMATTED_STRING",
-    ).execute()
+    )
+    result = execute_google_request(result)
     values = result.get("values", [])
     if not values:
         raise RuntimeError(f"No values returned from spreadsheet {spreadsheet_id} sheet {SHEET_NAME}.")
@@ -93,7 +110,8 @@ def clean_xlsx_value(value: Any) -> Any:
 
 def ensure_sheet_name(sheets: Any, spreadsheet_id: str, client_email: str) -> int:
     try:
-        metadata = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+        request = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties")
+        metadata = execute_google_request(request)
     except HttpError as exc:
         if exc.resp.status == 403:
             raise RuntimeError(
@@ -110,16 +128,18 @@ def ensure_sheet_name(sheets: Any, spreadsheet_id: str, client_email: str) -> in
         titles = ", ".join(props.get("title", "") for props in sheet_props)
         raise RuntimeError(f"Authoritative spreadsheet has no {SHEET_NAME!r} tab and is not single-sheet. Tabs: {titles}")
     sheet_id = int(sheet_props[0]["sheetId"])
-    sheets.spreadsheets().batchUpdate(
+    request = sheets.spreadsheets().batchUpdate(
         spreadsheetId=spreadsheet_id,
         body={"requests": [{"updateSheetProperties": {"properties": {"sheetId": sheet_id, "title": SHEET_NAME}, "fields": "title"}}]},
-    ).execute()
+    )
+    execute_google_request(request)
     return sheet_id
 
 
 def require_sheet_exists(sheets: Any, spreadsheet_id: str, client_email: str) -> int:
     try:
-        metadata = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+        request = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties")
+        metadata = execute_google_request(request)
     except HttpError as exc:
         if exc.resp.status == 403:
             raise RuntimeError(
@@ -138,7 +158,8 @@ def require_sheet_exists(sheets: Any, spreadsheet_id: str, client_email: str) ->
 
 def ensure_checkpoint_sheet(sheets: Any, spreadsheet_id: str, client_email: str) -> int:
     try:
-        metadata = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+        request = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties")
+        metadata = execute_google_request(request)
     except HttpError as exc:
         if exc.resp.status == 403:
             raise RuntimeError(
@@ -153,7 +174,7 @@ def ensure_checkpoint_sheet(sheets: Any, spreadsheet_id: str, client_email: str)
         if props.get("sheetType") == "GRID" and props.get("title") == CHECKPOINT_SHEET_NAME:
             sheet_id = int(props["sheetId"])
             if not props.get("hidden"):
-                sheets.spreadsheets().batchUpdate(
+                request = sheets.spreadsheets().batchUpdate(
                     spreadsheetId=spreadsheet_id,
                     body={
                         "requests": [
@@ -165,10 +186,11 @@ def ensure_checkpoint_sheet(sheets: Any, spreadsheet_id: str, client_email: str)
                             }
                         ]
                     },
-                ).execute()
+                )
+                execute_google_request(request)
             return sheet_id
 
-    response = sheets.spreadsheets().batchUpdate(
+    request = sheets.spreadsheets().batchUpdate(
         spreadsheetId=spreadsheet_id,
         body={
             "requests": [
@@ -183,16 +205,18 @@ def ensure_checkpoint_sheet(sheets: Any, spreadsheet_id: str, client_email: str)
                 }
             ]
         },
-    ).execute()
+    )
+    response = execute_google_request(request)
     return int(response["replies"][0]["addSheet"]["properties"]["sheetId"])
 
 
 def download_checkpoint(sheets: Any, client_email: str) -> None:
     ensure_checkpoint_sheet(sheets, AUTHORITATIVE_SPREADSHEET_ID, client_email)
-    response = sheets.spreadsheets().values().get(
+    request = sheets.spreadsheets().values().get(
         spreadsheetId=AUTHORITATIVE_SPREADSHEET_ID,
         range=f"{CHECKPOINT_SHEET_NAME}!A:B",
-    ).execute()
+    )
+    response = execute_google_request(request)
     values = response.get("values", [])
     CHECKPOINT_FILE.write_text(json.dumps(values, ensure_ascii=False), encoding="utf-8")
 
@@ -202,18 +226,20 @@ def upload_checkpoint(sheets: Any, client_email: str) -> None:
         return
     ensure_checkpoint_sheet(sheets, AUTHORITATIVE_SPREADSHEET_ID, client_email)
     values = json.loads(CHECKPOINT_FILE.read_text(encoding="utf-8"))
-    sheets.spreadsheets().values().clear(
+    request = sheets.spreadsheets().values().clear(
         spreadsheetId=AUTHORITATIVE_SPREADSHEET_ID,
         range=f"{CHECKPOINT_SHEET_NAME}!A:B",
         body={},
-    ).execute()
+    )
+    execute_google_request(request)
     if values:
-        sheets.spreadsheets().values().update(
+        request = sheets.spreadsheets().values().update(
             spreadsheetId=AUTHORITATIVE_SPREADSHEET_ID,
             range=f"{CHECKPOINT_SHEET_NAME}!A1",
             valueInputOption="RAW",
             body={"values": values},
-        ).execute()
+        )
+        execute_google_request(request)
 
 
 def cell_to_sheets_value(cell: Any) -> str | int | float:
@@ -240,17 +266,19 @@ def update_authoritative_sheet(sheets: Any, synced_xlsx: Path, client_email: str
     values = []
     for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
         values.append([cell_to_sheets_value(cell) for cell in row])
-    sheets.spreadsheets().values().clear(
+    request = sheets.spreadsheets().values().clear(
         spreadsheetId=AUTHORITATIVE_SPREADSHEET_ID,
         range=f"{SHEET_NAME}!A:Z",
         body={},
-    ).execute()
-    sheets.spreadsheets().values().update(
+    )
+    execute_google_request(request)
+    request = sheets.spreadsheets().values().update(
         spreadsheetId=AUTHORITATIVE_SPREADSHEET_ID,
         range=f"{SHEET_NAME}!A1",
         valueInputOption="USER_ENTERED",
         body={"values": values},
-    ).execute()
+    )
+    execute_google_request(request)
 
 
 def run_python(script: str) -> str:
